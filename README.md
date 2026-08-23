@@ -12,8 +12,11 @@ balances across a list of Solana wallets, plus $COK's live market stats.
 - The wallet list is shared, not per-browser: it's stored server-side, so
   everyone who opens the app sees the same list, and an add/remove is visible
   to all visitors (not just localStorage on one device).
-- **Invested** column: a best-effort estimate of SOL spent acquiring $COK,
-  computed on demand (see below) - not automatic, since it's expensive.
+- **Invested** column: a best-effort estimate (in USD) of what was spent
+  acquiring $COK, shown in dollars. Computed automatically the first time a
+  wallet is seen, then cached - it does not recompute itself on every load
+  (see below); use the ↻ next to a value, or **Calculate invested**, to
+  refresh it.
 
 ## Architecture
 
@@ -42,12 +45,17 @@ API client-side, since it's already CORS-enabled and requires no key.
 
 ### Invested (cost-basis estimate)
 
-There's no historical price feed for a token like $COK, so an accurate,
-fully-automatic "amount invested" isn't possible. Instead, clicking
-**Calculate** (per wallet) or **Calculate invested** (all wallets, one at a
-time) via `/api/cost-basis` (`api/cost-basis.ts` + `api/_costBasisHandler.ts`)
-scans the wallet's last 100 $COK transactions and sums the SOL that left the
-wallet in the same atomic transaction $COK arrived - i.e. an on-chain swap.
+There's no historical price feed for a token like $COK, so an accurate cost
+basis isn't possible - this is a best-effort estimate instead. The first
+time a wallet is seen, it's computed automatically (sequentially per
+wallet, to avoid piling concurrent RPC load); after that it's cached and
+only recomputes when you click the ↻ next to a value, or **Calculate
+invested** to refresh every wallet. Via `/api/cost-basis`
+(`api/cost-basis.ts` + `api/_costBasisHandler.ts`), it scans the wallet's
+last 100 $COK transactions and sums the SOL that left the wallet in the
+same atomic transaction $COK arrived - i.e. an on-chain swap. Shown in USD
+in the UI (using the current SOL price, not the price at the time of each
+swap - see below).
 
 What this does and doesn't capture:
 

@@ -132,24 +132,6 @@ function App() {
     refreshTokenStats()
   }, [refreshTokenStats])
 
-  // Loads whatever's already cached for newly-seen wallets. Cheap (one KV
-  // read, no RPC calls) so this is safe to do automatically; the expensive
-  // on-chain recompute only ever runs when the user clicks Calculate.
-  useEffect(() => {
-    const unfetched = wallets.filter((w) => !(w.address in costBasis))
-    unfetched.forEach((wallet) => {
-      fetchCachedCostBasis(wallet.address)
-        .then((result) => setCostBasis((prev) => ({ ...prev, [wallet.address]: result })))
-        .catch((error) =>
-          setCostBasisErrors((prev) => ({
-            ...prev,
-            [wallet.address]: error instanceof Error ? error.message : String(error),
-          }))
-        )
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wallets])
-
   const calculateCostBasis = useCallback(async (address: string) => {
     setCostBasisLoading((prev) => ({ ...prev, [address]: true }))
     setCostBasisErrors((prev) => {
@@ -176,6 +158,40 @@ function App() {
       await calculateCostBasis(wallet.address)
     }
   }, [wallets, calculateCostBasis])
+
+  // For each newly-seen wallet: load whatever's cached (cheap - one KV
+  // read), or if nothing's been computed yet, calculate it automatically.
+  // Sequential per the same rate-limit reasoning as calculateAllCostBasis;
+  // once a wallet has a cached value this never recomputes it on its own -
+  // only the ↻ button does that.
+  useEffect(() => {
+    let cancelled = false
+    async function run() {
+      for (const wallet of wallets) {
+        if (cancelled || wallet.address in costBasis) continue
+        try {
+          const cached = await fetchCachedCostBasis(wallet.address)
+          if (cancelled) return
+          if (cached) {
+            setCostBasis((prev) => ({ ...prev, [wallet.address]: cached }))
+          } else {
+            await calculateCostBasis(wallet.address)
+          }
+        } catch (error) {
+          if (cancelled) return
+          setCostBasisErrors((prev) => ({
+            ...prev,
+            [wallet.address]: error instanceof Error ? error.message : String(error),
+          }))
+        }
+      }
+    }
+    run()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallets])
 
   async function handleAddWallet(name: string, address: string) {
     const wallet: Wallet = { id: makeWalletId(), name, address }
@@ -382,15 +398,12 @@ function App() {
                       <span className="spinner" />
                     ) : cb ? (
                       <div className="invested-value">
-                        <div>
-                          <span>{formatAmount(cb.investedSol, 2)} SOL</span>
+                        <span>
+                          {formatUsd(solStats?.priceUsd != null ? cb.investedSol * solStats.priceUsd : null)}
                           {cb.truncated && (
                             <span title={`Only the last ${cb.signaturesScanned} transactions were scanned`}> *</span>
                           )}
-                        </div>
-                        <div className="invested-usd">
-                          {formatUsd(solStats?.priceUsd != null ? cb.investedSol * solStats.priceUsd : null)}
-                        </div>
+                        </span>
                         <button
                           className="icon-btn invested-recalc"
                           title="Recalculate"
@@ -399,13 +412,12 @@ function App() {
                           ↻
                         </button>
                       </div>
+                    ) : cbError ? (
+                      <button className="link-btn invested-error" title={cbError} onClick={() => calculateCostBasis(wallet.address)}>
+                        Failed, retry
+                      </button>
                     ) : (
-                      <>
-                        <button className="link-btn" onClick={() => calculateCostBasis(wallet.address)}>
-                          Calculate
-                        </button>
-                        {cbError && <div className="invested-error" title={cbError}>failed</div>}
-                      </>
+                      <span className="invested-usd">pending…</span>
                     )}
                   </td>
                   <td className="row-actions">
@@ -440,17 +452,10 @@ function App() {
               <td className="num">{formatSupplyShare(totals.hasToken ? totals.token : null)}</td>
               <td className="num invested-cell">
                 {investedTotals.hasAny ? (
-                  <div className="invested-value">
-                    <div>
-                      {formatAmount(investedTotals.investedSol, 2)} SOL
-                      {!investedTotals.allCalculated && <span title="Not all wallets calculated yet"> *</span>}
-                    </div>
-                    <div className="invested-usd">
-                      {formatUsd(
-                        solStats?.priceUsd != null ? investedTotals.investedSol * solStats.priceUsd : null
-                      )}
-                    </div>
-                  </div>
+                  <>
+                    {formatUsd(solStats?.priceUsd != null ? investedTotals.investedSol * solStats.priceUsd : null)}
+                    {!investedTotals.allCalculated && <span title="Not all wallets calculated yet"> *</span>}
+                  </>
                 ) : (
                   '—'
                 )}

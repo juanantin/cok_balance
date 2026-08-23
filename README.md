@@ -1,4 +1,4 @@
-# Wallet Balances
+# COK Wallet Balances
 
 A small React + TypeScript app that tracks SOL and Cat Own Kimono ($COK)
 balances across a list of Solana wallets, plus $COK's live market stats.

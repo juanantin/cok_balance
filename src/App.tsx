@@ -273,7 +273,7 @@ function App() {
     <div className="page">
       <header className="page-header">
         <div>
-          <h1>Wallet Balances</h1>
+          <h1>COK Wallet Balances</h1>
           <p className="subtitle">
             SOL and{' '}
             <a

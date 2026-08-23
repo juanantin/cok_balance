@@ -142,6 +142,14 @@ body {
   margin: -12px 0 24px;
 }
 
+.loading-placeholder {
+  margin: 0;
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
 @media (max-width: 640px) {
   .stats-grid {
     grid-template-columns: repeat(2, 1fr);

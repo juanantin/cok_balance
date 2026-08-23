@@ -9,8 +9,9 @@ balances across a list of Solana wallets, plus $COK's live market stats.
 - Shows $COK price, market cap, 24h volume, and liquidity, sourced from
   Dexscreener.
 - Ships with an initial list of wallets; use **+ Add wallet** to track more.
-- Wallets are persisted in the browser's `localStorage`, so the list survives
-  page reloads.
+- The wallet list is shared, not per-browser: it's stored server-side, so
+  everyone who opens the app sees the same list, and an add/remove is visible
+  to all visitors (not just localStorage on one device).
 
 ## Architecture
 
@@ -22,11 +23,20 @@ limiting (surfaced as `403` errors); routing through a server-side proxy
 avoids that, and lets all of a refresh's requests be batched into a single
 JSON-RPC call instead of one per wallet.
 
-`npm run dev` mirrors the same proxy logic via a Vite dev-server middleware
-(see `vite.config.ts`), so it works locally without needing `vercel dev`.
+The wallet list itself works the same way: `/api/wallets` (`api/wallets.ts`)
+reads/writes a single JSON blob in Upstash Redis rather than the browser's
+`localStorage`, so every visitor reads and writes the same list. `GET`
+returns the current list (or the 6 default wallets if none has been saved
+yet); `POST` overwrites it with the full list sent from the client.
 
-$COK market stats are fetched directly from Dexscreener's public API
-client-side, since it's already CORS-enabled and requires no key.
+`npm run dev` mirrors both `/api/rpc` and `/api/wallets` via Vite dev-server
+middleware (see `vite.config.ts`), so both work locally without needing
+`vercel dev`. The dev server also loads `.env` into `process.env` so
+server-side vars like `SOLANA_RPC_URL` and the `UPSTASH_REDIS_REST_*` ones
+below behave the same locally as they will on Vercel.
+
+$COK (and SOL) market stats are fetched directly from Dexscreener's public
+API client-side, since it's already CORS-enabled and requires no key.
 
 ## Development
 
@@ -36,6 +46,29 @@ npm run dev
 ```
 
 ## Configuration
+
+### Wallet storage (required)
+
+The shared wallet list needs an Upstash Redis database — it's free and takes
+about a minute:
+
+1. Create a database at [console.upstash.com](https://console.upstash.com)
+   (or add the "Upstash for Redis" integration from the Vercel Marketplace,
+   which does this and sets the env vars for you).
+2. From the database's REST API section, copy the URL and token.
+3. Set these as **server-side** env vars (no `VITE_` prefix) in Vercel under
+   Project Settings → Environment Variables, then redeploy:
+
+```
+UPSTASH_REDIS_REST_URL=https://your-db.upstash.io
+UPSTASH_REDIS_REST_TOKEN=your-token
+```
+
+Without these set, `/api/wallets` returns a 500 with an explanatory error
+instead of silently failing, and the app shows it under the table as
+"Wallets: ...".
+
+### RPC endpoint
 
 By default `/api/rpc` tries a short list of public, no-key RPC endpoints in
 order (`solana-rpc.publicnode.com`, `rpc.ankr.com`, then

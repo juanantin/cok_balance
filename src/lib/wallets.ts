@@ -1,30 +1,29 @@
 import type { Wallet } from '../types'
 
-const STORAGE_KEY = 'cok-balance-wallets'
-
-export const DEFAULT_WALLETS: Wallet[] = [
-  { id: 'gnappa', name: 'Gnappa', address: 'gMjCLUfBX3fv3VWTyvE6vsyKtxUupC133da2xw8Jakz' },
-  { id: 'jack', name: 'Jack', address: '45RvAw5LiHZpBBy77vQBFPmyHw9ptF9uaESCMW3XGyfR' },
-  { id: 'jack-juan', name: 'Jack + Juan', address: 'GfmH396hr7X4TUhkVduPFNVoiWogLyTVbmEffJkjYhx7' },
-  { id: 'simone', name: 'Simone', address: 'BaT2Vf4HKhxxXU2ZsnbeJHkqqZ8FHPBgE3V2fGAj2PmQ' },
-  { id: 'jack-2', name: 'Jack 2', address: 'AJK7CSkM2pjpKe9tMomexXP7kXemZPZo2aTtRvW1k3NR' },
-  { id: 'juan', name: 'Juan', address: 'BmaCNKYQ44kK99C3FSHu5txDmM5TyzDbLBdziG1oEgv3' },
-]
-
-export function loadWallets(): Wallet[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return DEFAULT_WALLETS
-    const parsed = JSON.parse(raw)
-    if (Array.isArray(parsed) && parsed.length > 0) return parsed
-    return DEFAULT_WALLETS
-  } catch {
-    return DEFAULT_WALLETS
+/**
+ * Wallet list now lives server-side (see api/wallets.ts) so every visitor
+ * shares the same list instead of each browser keeping its own in
+ * localStorage. Fetch on load, push the full list back on every add/remove.
+ */
+export async function fetchWallets(): Promise<Wallet[]> {
+  const res = await fetch('/api/wallets')
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new Error(body?.error ?? `Failed to load wallets (${res.status})`)
   }
+  return res.json()
 }
 
-export function saveWallets(wallets: Wallet[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(wallets))
+export async function persistWallets(wallets: Wallet[]): Promise<void> {
+  const res = await fetch('/api/wallets', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(wallets),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new Error(body?.error ?? `Failed to save wallets (${res.status})`)
+  }
 }
 
 export function makeWalletId(): string {

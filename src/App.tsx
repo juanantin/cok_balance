@@ -3,7 +3,7 @@ import { AddWalletForm } from './components/AddWalletForm'
 import { fetchTokenStats } from './lib/dexscreener'
 import type { TokenStats } from './lib/dexscreener'
 import { fetchAllBalances, fetchWalletBalance, SOL_MINT, TOKEN_MINT } from './lib/solana'
-import { loadWallets, makeWalletId, saveWallets } from './lib/wallets'
+import { fetchWallets, makeWalletId, persistWallets } from './lib/wallets'
 import type { Wallet, WalletBalance } from './types'
 
 const TOKEN_NAME = 'Cat Own Kimono'
@@ -58,7 +58,9 @@ function shortenAddress(address: string): string {
 }
 
 function App() {
-  const [wallets, setWallets] = useState<Wallet[]>(() => loadWallets())
+  const [wallets, setWallets] = useState<Wallet[]>([])
+  const [walletsLoading, setWalletsLoading] = useState(true)
+  const [walletsError, setWalletsError] = useState<string | null>(null)
   const [balances, setBalances] = useState<Record<string, WalletBalance>>({})
   const [showAddForm, setShowAddForm] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -68,8 +70,11 @@ function App() {
   const [tokenStatsLoading, setTokenStatsLoading] = useState(false)
 
   useEffect(() => {
-    saveWallets(wallets)
-  }, [wallets])
+    fetchWallets()
+      .then(setWallets)
+      .catch((error) => setWalletsError(error instanceof Error ? error.message : String(error)))
+      .finally(() => setWalletsLoading(false))
+  }, [])
 
   const refreshWallet = useCallback(async (wallet: Wallet) => {
     setBalances((prev) => ({
@@ -131,19 +136,31 @@ function App() {
     refreshTokenStats()
   }, [refreshTokenStats])
 
-  function handleAddWallet(name: string, address: string) {
+  async function handleAddWallet(name: string, address: string) {
     const wallet: Wallet = { id: makeWalletId(), name, address }
-    setWallets((prev) => [...prev, wallet])
+    const next = [...wallets, wallet]
+    setWallets(next)
     setShowAddForm(false)
+    try {
+      await persistWallets(next)
+    } catch (error) {
+      setWalletsError(error instanceof Error ? error.message : String(error))
+    }
   }
 
-  function handleRemoveWallet(id: string) {
-    setWallets((prev) => prev.filter((w) => w.id !== id))
+  async function handleRemoveWallet(id: string) {
+    const next = wallets.filter((w) => w.id !== id)
+    setWallets(next)
     setBalances((prev) => {
-      const next = { ...prev }
-      delete next[id]
-      return next
+      const rest = { ...prev }
+      delete rest[id]
+      return rest
     })
+    try {
+      await persistWallets(next)
+    } catch (error) {
+      setWalletsError(error instanceof Error ? error.message : String(error))
+    }
   }
 
   async function handleCopy(id: string, address: string) {
@@ -235,6 +252,7 @@ function App() {
         </div>
       </div>
       {tokenStatsError && <p className="error-line stats-error">Token stats: {tokenStatsError}</p>}
+      {walletsError && <p className="error-line stats-error">Wallets: {walletsError}</p>}
 
       {showAddForm && (
         <div className="modal-backdrop" onClick={() => setShowAddForm(false)}>
@@ -249,6 +267,11 @@ function App() {
         </div>
       )}
 
+      {walletsLoading ? (
+        <div className="table-wrap">
+          <p className="loading-placeholder">Loading wallets…</p>
+        </div>
+      ) : (
       <div className="table-wrap">
         <table className="wallet-table">
           <thead>
@@ -325,6 +348,7 @@ function App() {
           </tfoot>
         </table>
       </div>
+      )}
 
       {wallets.some((w) => balances[w.id]?.error) && (
         <div className="errors">

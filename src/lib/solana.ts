@@ -1,41 +1,21 @@
 export const TOKEN_MINT = 'Dnb9dLSXxAarXVexehzeH8W8nFmLMNJSuGoaddZSwtog'
 
-const RPC_URL = import.meta.env.VITE_SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com'
-
 const BASE58_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
 
 export function isValidSolanaAddress(address: string): boolean {
   return BASE58_RE.test(address.trim())
 }
 
-let requestId = 0
-
-async function rpcCall<T>(method: string, params: unknown[]): Promise<T> {
-  const res = await fetch(RPC_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: ++requestId,
-      method,
-      params,
-    }),
-  })
-
-  if (!res.ok) {
-    throw new Error(`RPC request failed (${res.status})`)
-  }
-
-  const json = await res.json()
-  if (json.error) {
-    throw new Error(json.error.message || 'RPC error')
-  }
-  return json.result as T
+export interface FetchedBalance {
+  sol: number | null
+  token: number | null
+  error: string | null
 }
 
-export async function getSolBalance(address: string): Promise<number> {
-  const result = await rpcCall<{ value: number }>('getBalance', [address])
-  return result.value / 1e9
+interface JsonRpcResponse {
+  id: number
+  error?: { message: string }
+  result?: unknown
 }
 
 interface TokenAccountsResult {
@@ -54,37 +34,76 @@ interface TokenAccountsResult {
   }>
 }
 
-export async function getTokenBalance(address: string, mint: string): Promise<number> {
-  const result = await rpcCall<TokenAccountsResult>('getTokenAccountsByOwner', [
-    address,
-    { mint },
-    { encoding: 'jsonParsed' },
-  ])
-  return result.value.reduce((sum, acc) => {
-    const amount = acc.account.data.parsed.info.tokenAmount.uiAmount
-    return sum + (amount ?? 0)
-  }, 0)
-}
+// Two RPC calls per wallet: SOL balance, and the token's ATAs.
+const CALLS_PER_WALLET = 2
 
-export interface FetchedBalance {
-  sol: number | null
-  token: number | null
-  error: string | null
+/**
+ * Fetches SOL and token balances for every address in one batched call to
+ * the /api/rpc proxy, instead of one browser-to-RPC request per wallet.
+ * Batching keeps this well under public RPC rate limits and avoids the
+ * per-origin CORS/403 blocks browsers hit calling Solana RPCs directly.
+ */
+export async function fetchAllBalances(addresses: string[]): Promise<Record<string, FetchedBalance>> {
+  if (addresses.length === 0) return {}
+
+  const batch = addresses.flatMap((address, i) => [
+    {
+      jsonrpc: '2.0',
+      id: i * CALLS_PER_WALLET,
+      method: 'getBalance',
+      params: [address],
+    },
+    {
+      jsonrpc: '2.0',
+      id: i * CALLS_PER_WALLET + 1,
+      method: 'getTokenAccountsByOwner',
+      params: [address, { mint: TOKEN_MINT }, { encoding: 'jsonParsed' }],
+    },
+  ])
+
+  const res = await fetch('/api/rpc', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(batch),
+  })
+
+  if (!res.ok) {
+    const message = `Balance lookup failed (${res.status})`
+    return Object.fromEntries(addresses.map((address) => [address, { sol: null, token: null, error: message }]))
+  }
+
+  const results: JsonRpcResponse[] = await res.json()
+  const byId = new Map(results.map((r) => [r.id, r]))
+
+  const balances: Record<string, FetchedBalance> = {}
+  addresses.forEach((address, i) => {
+    const solResponse = byId.get(i * CALLS_PER_WALLET)
+    const tokenResponse = byId.get(i * CALLS_PER_WALLET + 1)
+
+    const errors: string[] = []
+    let sol: number | null = null
+    let token: number | null = null
+
+    if (solResponse?.error) {
+      errors.push(solResponse.error.message)
+    } else if (solResponse?.result) {
+      sol = (solResponse.result as { value: number }).value / 1e9
+    }
+
+    if (tokenResponse?.error) {
+      errors.push(tokenResponse.error.message)
+    } else if (tokenResponse?.result) {
+      const accounts = (tokenResponse.result as TokenAccountsResult).value
+      token = accounts.reduce((sum, acc) => sum + (acc.account.data.parsed.info.tokenAmount.uiAmount ?? 0), 0)
+    }
+
+    balances[address] = { sol, token, error: errors.length > 0 ? errors.join('; ') : null }
+  })
+
+  return balances
 }
 
 export async function fetchWalletBalance(address: string): Promise<FetchedBalance> {
-  const [solResult, tokenResult] = await Promise.allSettled([
-    getSolBalance(address),
-    getTokenBalance(address, TOKEN_MINT),
-  ])
-
-  const errors: string[] = []
-  if (solResult.status === 'rejected') errors.push(String(solResult.reason?.message ?? solResult.reason))
-  if (tokenResult.status === 'rejected') errors.push(String(tokenResult.reason?.message ?? tokenResult.reason))
-
-  return {
-    sol: solResult.status === 'fulfilled' ? solResult.value : null,
-    token: tokenResult.status === 'fulfilled' ? tokenResult.value : null,
-    error: errors.length > 0 ? errors.join('; ') : null,
-  }
+  const balances = await fetchAllBalances([address])
+  return balances[address]
 }

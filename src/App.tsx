@@ -1,14 +1,38 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AddWalletForm } from './components/AddWalletForm'
-import { fetchWalletBalance, TOKEN_MINT } from './lib/solana'
+import { fetchTokenStats } from './lib/dexscreener'
+import type { TokenStats } from './lib/dexscreener'
+import { fetchAllBalances, fetchWalletBalance, TOKEN_MINT } from './lib/solana'
 import { loadWallets, makeWalletId, saveWallets } from './lib/wallets'
 import type { Wallet, WalletBalance } from './types'
+
+const TOKEN_NAME = 'Cat Own Kimono'
+const TOKEN_SYMBOL = 'COK'
 
 const EMPTY_BALANCE: WalletBalance = { sol: null, token: null, error: null, loading: false }
 
 function formatAmount(value: number | null, digits = 4): string {
   if (value === null) return '—'
   return value.toLocaleString(undefined, { maximumFractionDigits: digits })
+}
+
+function formatUsd(value: number | null | undefined): string {
+  if (value == null) return '—'
+  return Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    notation: 'compact',
+    maximumFractionDigits: 2,
+  }).format(value)
+}
+
+function formatPrice(value: number | null | undefined): string {
+  if (value == null) return '—'
+  return Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: value < 1 ? 6 : 2,
+  }).format(value)
 }
 
 function shortenAddress(address: string): string {
@@ -20,6 +44,9 @@ function App() {
   const [balances, setBalances] = useState<Record<string, WalletBalance>>({})
   const [showAddForm, setShowAddForm] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [tokenStats, setTokenStats] = useState<TokenStats | null>(null)
+  const [tokenStatsError, setTokenStatsError] = useState<string | null>(null)
+  const [tokenStatsLoading, setTokenStatsLoading] = useState(false)
 
   useEffect(() => {
     saveWallets(wallets)
@@ -37,20 +64,52 @@ function App() {
     }))
   }, [])
 
-  const refreshAll = useCallback(() => {
-    wallets.forEach((wallet) => {
-      refreshWallet(wallet)
+  const refreshAllBalances = useCallback(async (walletsToRefresh: Wallet[]) => {
+    if (walletsToRefresh.length === 0) return
+    setBalances((prev) => {
+      const next = { ...prev }
+      walletsToRefresh.forEach((wallet) => {
+        next[wallet.id] = { ...(next[wallet.id] ?? EMPTY_BALANCE), loading: true }
+      })
+      return next
     })
-  }, [wallets, refreshWallet])
+    const results = await fetchAllBalances(walletsToRefresh.map((w) => w.address))
+    setBalances((prev) => {
+      const next = { ...prev }
+      walletsToRefresh.forEach((wallet) => {
+        next[wallet.id] = { ...results[wallet.address], loading: false }
+      })
+      return next
+    })
+  }, [])
+
+  const refreshTokenStats = useCallback(async () => {
+    setTokenStatsLoading(true)
+    setTokenStatsError(null)
+    try {
+      const stats = await fetchTokenStats(TOKEN_MINT)
+      setTokenStats(stats)
+    } catch (error) {
+      setTokenStatsError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setTokenStatsLoading(false)
+    }
+  }, [])
+
+  const refreshAll = useCallback(() => {
+    refreshAllBalances(wallets)
+    refreshTokenStats()
+  }, [wallets, refreshAllBalances, refreshTokenStats])
 
   useEffect(() => {
-    wallets.forEach((wallet) => {
-      if (!balances[wallet.id]) {
-        refreshWallet(wallet)
-      }
-    })
+    const unfetched = wallets.filter((w) => !balances[w.id])
+    if (unfetched.length > 0) refreshAllBalances(unfetched)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wallets])
+
+  useEffect(() => {
+    refreshTokenStats()
+  }, [refreshTokenStats])
 
   function handleAddWallet(name: string, address: string) {
     const wallet: Wallet = { id: makeWalletId(), name, address }
@@ -101,26 +160,55 @@ function App() {
         <div>
           <h1>Wallet Balances</h1>
           <p className="subtitle">
-            SOL and token balances for{' '}
+            SOL and{' '}
             <a
-              href={`https://solscan.io/token/${TOKEN_MINT}`}
+              href={tokenStats?.url ?? `https://solscan.io/token/${TOKEN_MINT}`}
               target="_blank"
               rel="noreferrer"
               className="mint-link"
             >
-              {shortenAddress(TOKEN_MINT)}
-            </a>
+              {TOKEN_NAME} (${TOKEN_SYMBOL})
+            </a>{' '}
+            balances for {shortenAddress(TOKEN_MINT)}
           </p>
         </div>
         <div className="header-actions">
-          <button className="btn btn-ghost" onClick={refreshAll} disabled={anyLoading}>
-            {anyLoading ? 'Refreshing…' : 'Refresh all'}
+          <button className="btn btn-ghost" onClick={refreshAll} disabled={anyLoading || tokenStatsLoading}>
+            {anyLoading || tokenStatsLoading ? 'Refreshing…' : 'Refresh all'}
           </button>
           <button className="btn btn-primary" onClick={() => setShowAddForm(true)}>
             + Add wallet
           </button>
         </div>
       </header>
+
+      <div className="stats-grid">
+        <div className="stat-card">
+          <span className="stat-label">Price</span>
+          <span className="stat-value">
+            {tokenStatsLoading && !tokenStats ? <span className="spinner" /> : formatPrice(tokenStats?.priceUsd)}
+          </span>
+        </div>
+        <div className="stat-card">
+          <span className="stat-label">Market Cap</span>
+          <span className="stat-value">
+            {tokenStatsLoading && !tokenStats ? <span className="spinner" /> : formatUsd(tokenStats?.marketCapUsd)}
+          </span>
+        </div>
+        <div className="stat-card">
+          <span className="stat-label">24h Volume</span>
+          <span className="stat-value">
+            {tokenStatsLoading && !tokenStats ? <span className="spinner" /> : formatUsd(tokenStats?.volume24hUsd)}
+          </span>
+        </div>
+        <div className="stat-card">
+          <span className="stat-label">Liquidity</span>
+          <span className="stat-value">
+            {tokenStatsLoading && !tokenStats ? <span className="spinner" /> : formatUsd(tokenStats?.liquidityUsd)}
+          </span>
+        </div>
+      </div>
+      {tokenStatsError && <p className="error-line stats-error">Token stats: {tokenStatsError}</p>}
 
       {showAddForm && (
         <div className="modal-backdrop" onClick={() => setShowAddForm(false)}>
@@ -142,7 +230,7 @@ function App() {
               <th>Name</th>
               <th>Address</th>
               <th className="num">SOL</th>
-              <th className="num">Token</th>
+              <th className="num">${TOKEN_SYMBOL}</th>
               <th></th>
             </tr>
           </thead>

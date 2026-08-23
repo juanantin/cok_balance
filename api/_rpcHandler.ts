@@ -1,7 +1,7 @@
 // Public, no-key Solana RPC endpoints, tried in order. None of these are
 // guaranteed to stay reliable long-term (they rate-limit and occasionally
-// block datacenter/serverless IPs), which is why SOLANA_RPC_URL lets you
-// override with a dedicated provider (e.g. Helius) that won't 403.
+// block datacenter/serverless IPs outright), which is why SOLANA_RPC_URL
+// lets you override with a dedicated provider (e.g. Helius) that won't.
 const FALLBACK_RPC_URLS = [
   'https://solana-rpc.publicnode.com',
   'https://rpc.ankr.com/solana',
@@ -9,6 +9,7 @@ const FALLBACK_RPC_URLS = [
 ]
 
 const ALLOWED_METHODS = new Set(['getBalance', 'getTokenAccountsByOwner'])
+const REQUEST_TIMEOUT_MS = 8000
 
 interface JsonRpcRequest {
   jsonrpc: string
@@ -40,16 +41,39 @@ function hostOf(url: string): string {
   }
 }
 
+// Sends each JSON-RPC request as its own POST rather than a batch array.
+// Several public gateways (publicnode among them) reject batch arrays
+// outright with a 400, so single requests are the only format every
+// provider is guaranteed to accept. Requests still run concurrently.
+async function callEndpoint(url: string, requests: JsonRpcRequest[]): Promise<unknown[]> {
+  return Promise.all(
+    requests.map(async (request) => {
+      const upstream = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      })
+
+      if (!upstream.ok) {
+        throw new Error(String(upstream.status))
+      }
+
+      return JSON.parse(await upstream.text())
+    })
+  )
+}
+
 /**
- * Forwards a batched JSON-RPC request to a Solana RPC endpoint on the
+ * Forwards a batch of JSON-RPC requests to a Solana RPC endpoint on the
  * server side. Kept behind this proxy (rather than calling the RPC
  * directly from the browser) so wallet balance lookups aren't subject to
  * per-browser CORS/origin blocking or per-client rate limits.
  *
- * Public RPC endpoints frequently rate-limit or outright block serverless
- * IPs (a plain 403), so this walks a list of candidates - starting with
- * SOLANA_RPC_URL if set - until one responds successfully, rather than
- * failing the whole request on the first block.
+ * Public RPC endpoints frequently reject batches, rate-limit, or block
+ * serverless IPs outright, so this walks a list of candidates - starting
+ * with SOLANA_RPC_URL if set - until one answers every request in the
+ * batch successfully, rather than failing on the first block.
  */
 export async function proxyRpc(body: unknown): Promise<ProxyResult> {
   const requests = Array.isArray(body) ? body : [body]
@@ -68,23 +92,8 @@ export async function proxyRpc(body: unknown): Promise<ProxyResult> {
 
   for (const url of candidates) {
     try {
-      const upstream = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-
-      if (!upstream.ok) {
-        failures.push(`${hostOf(url)} → ${upstream.status}`)
-        continue
-      }
-
-      const text = await upstream.text()
-      try {
-        return { status: 200, body: JSON.parse(text) }
-      } catch {
-        failures.push(`${hostOf(url)} → invalid JSON response`)
-      }
+      const responses = await callEndpoint(url, requests as JsonRpcRequest[])
+      return { status: 200, body: responses }
     } catch (error) {
       failures.push(`${hostOf(url)} → ${error instanceof Error ? error.message : String(error)}`)
     }

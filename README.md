@@ -37,16 +37,29 @@ npm run dev
 
 ## Configuration
 
-By default `/api/rpc` forwards to the public `https://rpc.ankr.com/solana`
-endpoint. For heavier use, set `SOLANA_RPC_URL` (a **server-side** env var —
-no `VITE_` prefix, so it's never exposed to the browser) to a dedicated RPC
-provider, e.g. from [Helius](https://helius.dev):
+By default `/api/rpc` tries a short list of public, no-key RPC endpoints in
+order (`solana-rpc.publicnode.com`, `rpc.ankr.com`, then
+`api.mainnet-beta.solana.com`), falling through to the next if one blocks or
+rate-limits the request. Public endpoints are still not reliable for
+sustained use — they routinely 403 datacenter/serverless traffic outright.
+
+For reliable balances, set `SOLANA_RPC_URL` (a **server-side** env var — no
+`VITE_` prefix, so it's never exposed to the browser) to a dedicated RPC
+endpoint. [Helius](https://helius.dev) has a free tier that works well for
+this:
 
 ```
-SOLANA_RPC_URL=https://your-rpc-provider.example.com
+SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
 ```
 
-On Vercel, set this under Project Settings → Environment Variables.
+On Vercel, set this under Project Settings → Environment Variables, then
+redeploy (env var changes don't apply to already-running deployments).
+
+If balances still fail after that, check the error text shown under the
+table — it now reports which endpoint(s) rejected the request and why. A
+403 on *every* wallet at once (rather than sporadically) can also mean
+Vercel's Deployment Protection is intercepting `/api/rpc` itself; check
+Project Settings → Deployment Protection if so.
 
 ## Build
 

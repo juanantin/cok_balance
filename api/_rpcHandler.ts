@@ -1,4 +1,12 @@
-const DEFAULT_RPC_URL = 'https://rpc.ankr.com/solana'
+// Public, no-key Solana RPC endpoints, tried in order. None of these are
+// guaranteed to stay reliable long-term (they rate-limit and occasionally
+// block datacenter/serverless IPs), which is why SOLANA_RPC_URL lets you
+// override with a dedicated provider (e.g. Helius) that won't 403.
+const FALLBACK_RPC_URLS = [
+  'https://solana-rpc.publicnode.com',
+  'https://rpc.ankr.com/solana',
+  'https://api.mainnet-beta.solana.com',
+]
 
 const ALLOWED_METHODS = new Set(['getBalance', 'getTokenAccountsByOwner'])
 
@@ -24,12 +32,24 @@ function isValidRequest(value: unknown): value is JsonRpcRequest {
   )
 }
 
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
+}
+
 /**
  * Forwards a batched JSON-RPC request to a Solana RPC endpoint on the
  * server side. Kept behind this proxy (rather than calling the RPC
  * directly from the browser) so wallet balance lookups aren't subject to
- * per-browser CORS/origin blocking or per-client rate limits, and so the
- * RPC endpoint can be swapped or authenticated via a server-only env var.
+ * per-browser CORS/origin blocking or per-client rate limits.
+ *
+ * Public RPC endpoints frequently rate-limit or outright block serverless
+ * IPs (a plain 403), so this walks a list of candidates - starting with
+ * SOLANA_RPC_URL if set - until one responds successfully, rather than
+ * failing the whole request on the first block.
  */
 export async function proxyRpc(body: unknown): Promise<ProxyResult> {
   const requests = Array.isArray(body) ? body : [body]
@@ -41,21 +61,37 @@ export async function proxyRpc(body: unknown): Promise<ProxyResult> {
     return { status: 400, body: { error: 'Request contains an unsupported RPC method.' } }
   }
 
-  const rpcUrl = process.env.SOLANA_RPC_URL || DEFAULT_RPC_URL
+  const configuredUrl = process.env.SOLANA_RPC_URL
+  const candidates = configuredUrl ? [configuredUrl, ...FALLBACK_RPC_URLS] : FALLBACK_RPC_URLS
 
-  const upstream = await fetch(rpcUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+  const failures: string[] = []
 
-  const text = await upstream.text()
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    return { status: 502, body: { error: 'Upstream RPC returned a non-JSON response.' } }
+  for (const url of candidates) {
+    try {
+      const upstream = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+
+      if (!upstream.ok) {
+        failures.push(`${hostOf(url)} → ${upstream.status}`)
+        continue
+      }
+
+      const text = await upstream.text()
+      try {
+        return { status: 200, body: JSON.parse(text) }
+      } catch {
+        failures.push(`${hostOf(url)} → invalid JSON response`)
+      }
+    } catch (error) {
+      failures.push(`${hostOf(url)} → ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
-  return { status: upstream.ok ? 200 : upstream.status, body: parsed }
+  return {
+    status: 502,
+    body: { error: `All RPC endpoints failed: ${failures.join('; ')}` },
+  }
 }

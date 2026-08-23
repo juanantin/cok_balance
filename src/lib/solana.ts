@@ -68,7 +68,8 @@ export async function fetchAllBalances(addresses: string[]): Promise<Record<stri
   })
 
   if (!res.ok) {
-    const message = `Balance lookup failed (${res.status})`
+    const body = await res.json().catch(() => null)
+    const message = body?.error ? String(body.error) : `Balance lookup failed (${res.status})`
     return Object.fromEntries(addresses.map((address) => [address, { sol: null, token: null, error: message }]))
   }
 

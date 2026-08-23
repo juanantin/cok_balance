@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { AddWalletForm } from './components/AddWalletForm'
 import { fetchTokenStats } from './lib/dexscreener'
 import type { TokenStats } from './lib/dexscreener'
-import { fetchAllBalances, fetchWalletBalance, TOKEN_MINT } from './lib/solana'
+import { fetchAllBalances, fetchWalletBalance, SOL_MINT, TOKEN_MINT } from './lib/solana'
 import { loadWallets, makeWalletId, saveWallets } from './lib/wallets'
 import type { Wallet, WalletBalance } from './types'
 
@@ -42,6 +42,17 @@ function formatPrice(value: number | null | undefined): string {
   }).format(value)
 }
 
+function computeUsdValue(
+  balance: WalletBalance,
+  solPriceUsd: number | null | undefined,
+  tokenPriceUsd: number | null | undefined
+): number | null {
+  if (balance.sol == null || balance.token == null || solPriceUsd == null || tokenPriceUsd == null) {
+    return null
+  }
+  return balance.sol * solPriceUsd + balance.token * tokenPriceUsd
+}
+
 function shortenAddress(address: string): string {
   return `${address.slice(0, 4)}…${address.slice(-4)}`
 }
@@ -52,6 +63,7 @@ function App() {
   const [showAddForm, setShowAddForm] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [tokenStats, setTokenStats] = useState<TokenStats | null>(null)
+  const [solStats, setSolStats] = useState<TokenStats | null>(null)
   const [tokenStatsError, setTokenStatsError] = useState<string | null>(null)
   const [tokenStatsLoading, setTokenStatsLoading] = useState(false)
 
@@ -94,8 +106,9 @@ function App() {
     setTokenStatsLoading(true)
     setTokenStatsError(null)
     try {
-      const stats = await fetchTokenStats(TOKEN_MINT)
+      const [stats, sol] = await Promise.all([fetchTokenStats(TOKEN_MINT), fetchTokenStats(SOL_MINT)])
       setTokenStats(stats)
+      setSolStats(sol)
     } catch (error) {
       setTokenStatsError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -244,6 +257,7 @@ function App() {
               <th>Address</th>
               <th className="num">SOL</th>
               <th className="num">${TOKEN_SYMBOL}</th>
+              <th className="num">$ Value</th>
               <th className="num">% Supply</th>
               <th></th>
             </tr>
@@ -265,6 +279,13 @@ function App() {
                   </td>
                   <td className="num">
                     {balance.loading ? <span className="spinner" /> : formatAmount(balance.token, 0)}
+                  </td>
+                  <td className="num">
+                    {balance.loading ? (
+                      <span className="spinner" />
+                    ) : (
+                      formatUsd(computeUsdValue(balance, solStats?.priceUsd, tokenStats?.priceUsd))
+                    )}
                   </td>
                   <td className="num">
                     {balance.loading ? <span className="spinner" /> : formatSupplyShare(balance.token)}
@@ -291,6 +312,13 @@ function App() {
               <td colSpan={2}>Total</td>
               <td className="num">{formatAmount(totals.hasSol ? totals.sol : null)}</td>
               <td className="num">{formatAmount(totals.hasToken ? totals.token : null, 0)}</td>
+              <td className="num">
+                {formatUsd(
+                  totals.hasSol && totals.hasToken
+                    ? computeUsdValue({ sol: totals.sol, token: totals.token, error: null, loading: false }, solStats?.priceUsd, tokenStats?.priceUsd)
+                    : null
+                )}
+              </td>
               <td className="num">{formatSupplyShare(totals.hasToken ? totals.token : null)}</td>
               <td></td>
             </tr>

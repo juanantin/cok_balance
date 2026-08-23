@@ -1,4 +1,5 @@
 export const TOKEN_MINT = 'Dnb9dLSXxAarXVexehzeH8W8nFmLMNJSuGoaddZSwtog'
+export const SOL_MINT = 'So11111111111111111111111111111111111111112'
 
 const BASE58_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
 

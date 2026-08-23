@@ -35,6 +35,28 @@ function formatUsd(value: number | null | undefined): string {
   }).format(value)
 }
 
+// A per-token price needs more precision than compact-notation dollar
+// amounts (formatUsd would round $0.0019 to $0.00).
+function formatPricePerToken(value: number | null): string {
+  if (value == null) return '—'
+  return Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: value < 1 ? 6 : 2,
+  }).format(value)
+}
+
+// SOL spent per token acquired via on-chain swaps, converted to USD at the
+// CURRENT SOL price (not the price at each swap's time - same caveat as
+// the rest of the Invested estimate).
+function computeAvgEntryPriceUsd(
+  cb: CostBasisResult | null | undefined,
+  solPriceUsd: number | null | undefined
+): number | null {
+  if (!cb || cb.tokensAcquiredViaSwap <= 0 || solPriceUsd == null) return null
+  return (cb.investedSol / cb.tokensAcquiredViaSwap) * solPriceUsd
+}
+
 function computeUsdValue(
   balance: WalletBalance,
   solPriceUsd: number | null | undefined,
@@ -251,13 +273,14 @@ function App() {
       const cb = costBasis[wallet.address]
       if (cb) {
         acc.investedSol += cb.investedSol
+        acc.tokensAcquiredViaSwap += cb.tokensAcquiredViaSwap
         acc.hasAny = true
       } else {
         acc.allCalculated = false
       }
       return acc
     },
-    { investedSol: 0, hasAny: false, allCalculated: true }
+    { investedSol: 0, tokensAcquiredViaSwap: 0, hasAny: false, allCalculated: true }
   )
 
   const anyLoading = wallets.some((w) => balances[w.id]?.loading)
@@ -359,6 +382,9 @@ function App() {
               <th className="num" title="Best-effort: SOL spent in on-chain swaps only, last 100 txns">
                 Invested
               </th>
+              <th className="num" title="Average price paid per token across on-chain swaps, at today's SOL price">
+                Avg Entry
+              </th>
               <th></th>
             </tr>
           </thead>
@@ -420,6 +446,9 @@ function App() {
                       <span className="invested-usd">pending…</span>
                     )}
                   </td>
+                  <td className="num">
+                    {cbLoading ? <span className="spinner" /> : formatPricePerToken(computeAvgEntryPriceUsd(cb, solStats?.priceUsd))}
+                  </td>
                   <td className="row-actions">
                     <button
                       className="icon-btn"
@@ -458,6 +487,13 @@ function App() {
                   </>
                 ) : (
                   '—'
+                )}
+              </td>
+              <td className="num">
+                {formatPricePerToken(
+                  investedTotals.hasAny && investedTotals.tokensAcquiredViaSwap > 0 && solStats?.priceUsd != null
+                    ? (investedTotals.investedSol / investedTotals.tokensAcquiredViaSwap) * solStats.priceUsd
+                    : null
                 )}
               </td>
               <td></td>

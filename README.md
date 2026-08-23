@@ -55,7 +55,10 @@ invested** to refresh every wallet. Via `/api/cost-basis`
 last 100 $COK transactions and sums the SOL that left the wallet in the
 same atomic transaction $COK arrived - i.e. an on-chain swap. Shown in USD
 in the UI (using the current SOL price, not the price at the time of each
-swap - see below).
+swap - see below). **Avg Entry** is the same data divided out to a
+per-token price (Invested ÷ tokens acquired via swap); the total row's
+figure is the weighted average across all calculated wallets, not an
+average of the per-wallet averages.
 
 What this does and doesn't capture:
 

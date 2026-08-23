@@ -19,6 +19,13 @@ function formatAmount(value: number | null, digits = 4): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: digits })
 }
 
+// $COK balances run into the millions - compact notation (12.3K, 1.2M)
+// keeps the column narrow instead of long grouped digit strings.
+function formatTokenAmount(value: number | null): string {
+  if (value === null) return '—'
+  return Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(value)
+}
+
 function formatSupplyShare(token: number | null): string {
   if (token === null) return '—'
   const share = (token / TOKEN_SUPPLY) * 100
@@ -411,7 +418,7 @@ function App() {
                     )}
                   </td>
                   <td className="num">
-                    {balance.loading ? <span className="spinner" /> : formatAmount(balance.token, 0)}
+                    {balance.loading ? <span className="spinner" /> : formatTokenAmount(balance.token)}
                   </td>
                   <td className="num">
                     {balance.loading ? <span className="spinner" /> : formatSupplyShare(balance.token)}
@@ -478,7 +485,7 @@ function App() {
                     : null
                 )}
               </td>
-              <td className="num">{formatAmount(totals.hasToken ? totals.token : null, 0)}</td>
+              <td className="num">{formatTokenAmount(totals.hasToken ? totals.token : null)}</td>
               <td className="num">{formatSupplyShare(totals.hasToken ? totals.token : null)}</td>
               <td className="num invested-cell">
                 {investedTotals.hasAny ? (

@@ -35,17 +35,6 @@ function formatUsd(value: number | null | undefined): string {
   }).format(value)
 }
 
-// A per-token price needs more precision than compact-notation dollar
-// amounts (formatUsd would round $0.0019 to $0.00).
-function formatPricePerToken(value: number | null): string {
-  if (value == null) return '—'
-  return Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: value < 1 ? 6 : 2,
-  }).format(value)
-}
-
 // SOL spent per token acquired via on-chain swaps, converted to USD at the
 // CURRENT SOL price (not the price at each swap's time - same caveat as
 // the rest of the Invested estimate).
@@ -55,6 +44,11 @@ function computeAvgEntryPriceUsd(
 ): number | null {
   if (!cb || cb.tokensAcquiredViaSwap <= 0 || solPriceUsd == null) return null
   return (cb.investedSol / cb.tokensAcquiredViaSwap) * solPriceUsd
+}
+
+// Market cap implied by a per-token price, at the fixed total supply.
+function priceToMarketCap(priceUsd: number | null): number | null {
+  return priceUsd == null ? null : priceUsd * TOKEN_SUPPLY
 }
 
 function computeUsdValue(
@@ -382,8 +376,11 @@ function App() {
               <th className="num" title="Best-effort: SOL spent in on-chain swaps only, last 100 txns">
                 Invested
               </th>
-              <th className="num" title="Average price paid per token across on-chain swaps, at today's SOL price">
-                Avg Entry
+              <th
+                className="num"
+                title="Market cap implied by the average price paid per token across on-chain swaps, at today's SOL price"
+              >
+                Avg Entry MC
               </th>
               <th></th>
             </tr>
@@ -447,7 +444,11 @@ function App() {
                     )}
                   </td>
                   <td className="num">
-                    {cbLoading ? <span className="spinner" /> : formatPricePerToken(computeAvgEntryPriceUsd(cb, solStats?.priceUsd))}
+                    {cbLoading ? (
+                      <span className="spinner" />
+                    ) : (
+                      formatUsd(priceToMarketCap(computeAvgEntryPriceUsd(cb, solStats?.priceUsd)))
+                    )}
                   </td>
                   <td className="row-actions">
                     <button
@@ -490,10 +491,12 @@ function App() {
                 )}
               </td>
               <td className="num">
-                {formatPricePerToken(
-                  investedTotals.hasAny && investedTotals.tokensAcquiredViaSwap > 0 && solStats?.priceUsd != null
-                    ? (investedTotals.investedSol / investedTotals.tokensAcquiredViaSwap) * solStats.priceUsd
-                    : null
+                {formatUsd(
+                  priceToMarketCap(
+                    investedTotals.hasAny && investedTotals.tokensAcquiredViaSwap > 0 && solStats?.priceUsd != null
+                      ? (investedTotals.investedSol / investedTotals.tokensAcquiredViaSwap) * solStats.priceUsd
+                      : null
+                  )
                 )}
               </td>
               <td></td>

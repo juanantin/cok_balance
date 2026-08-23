@@ -8,7 +8,7 @@ import type { Wallet, WalletBalance } from './types'
 
 const TOKEN_NAME = 'Cat Own Kimono'
 const TOKEN_SYMBOL = 'COK'
-const TOKEN_SUPPLY = 1_000_000_000
+const TOKEN_SUPPLY = 1_000_000_000_000
 
 const EMPTY_BALANCE: WalletBalance = { sol: null, token: null, error: null, loading: false }
 
@@ -20,7 +20,8 @@ function formatAmount(value: number | null, digits = 4): string {
 function formatSupplyShare(token: number | null): string {
   if (token === null) return '—'
   const share = (token / TOKEN_SUPPLY) * 100
-  return `${share.toLocaleString(undefined, { maximumFractionDigits: share < 1 ? 3 : 2 })}%`
+  const digits = share === 0 ? 0 : share < 0.01 ? 6 : share < 1 ? 4 : 2
+  return `${share.toLocaleString(undefined, { maximumFractionDigits: digits })}%`
 }
 
 function formatUsd(value: number | null | undefined): string {

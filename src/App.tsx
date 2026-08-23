@@ -353,8 +353,8 @@ function App() {
               <th>Name</th>
               <th>Address</th>
               <th className="num">SOL</th>
-              <th className="num">${TOKEN_SYMBOL}</th>
               <th className="num">$ Value</th>
+              <th className="num">${TOKEN_SYMBOL}</th>
               <th className="num">% Supply</th>
               <th className="num" title="Best-effort: SOL spent in on-chain swaps only, last 100 txns">
                 Invested
@@ -381,14 +381,14 @@ function App() {
                     {balance.loading ? <span className="spinner" /> : formatAmount(balance.sol)}
                   </td>
                   <td className="num">
-                    {balance.loading ? <span className="spinner" /> : formatAmount(balance.token, 0)}
-                  </td>
-                  <td className="num">
                     {balance.loading ? (
                       <span className="spinner" />
                     ) : (
                       formatUsd(computeUsdValue(balance, solStats?.priceUsd, tokenStats?.priceUsd))
                     )}
+                  </td>
+                  <td className="num">
+                    {balance.loading ? <span className="spinner" /> : formatAmount(balance.token, 0)}
                   </td>
                   <td className="num">
                     {balance.loading ? <span className="spinner" /> : formatSupplyShare(balance.token)}
@@ -441,7 +441,6 @@ function App() {
             <tr className="total-row">
               <td colSpan={2}>Total</td>
               <td className="num">{formatAmount(totals.hasSol ? totals.sol : null)}</td>
-              <td className="num">{formatAmount(totals.hasToken ? totals.token : null, 0)}</td>
               <td className="num">
                 {formatUsd(
                   totals.hasSol && totals.hasToken
@@ -449,6 +448,7 @@ function App() {
                     : null
                 )}
               </td>
+              <td className="num">{formatAmount(totals.hasToken ? totals.token : null, 0)}</td>
               <td className="num">{formatSupplyShare(totals.hasToken ? totals.token : null)}</td>
               <td className="num invested-cell">
                 {investedTotals.hasAny ? (

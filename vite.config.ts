@@ -62,16 +62,46 @@ function walletsDevProxy(): Plugin {
   }
 }
 
+// Mirrors api/cost-basis.ts for the same reason.
+function costBasisDevProxy(): Plugin {
+  return {
+    name: 'cost-basis-dev-proxy',
+    configureServer(server) {
+      server.middlewares.use('/api/cost-basis', async (req, res) => {
+        try {
+          const { getCachedCostBasis, refreshCostBasis } = await server.ssrLoadModule('/api/_costBasisHandler.ts')
+          if (req.method === 'GET') {
+            const address = new URL(req.url ?? '', 'http://localhost').searchParams.get('address')
+            if (!address) return sendJson(res, 400, { error: 'Missing "address" query param.' })
+            sendJson(res, 200, await getCachedCostBasis(address))
+            return
+          }
+          if (req.method === 'POST') {
+            const raw = await readBody(req)
+            const address = (raw ? JSON.parse(raw) : null)?.address
+            if (!address) return sendJson(res, 400, { error: 'Missing "address" in request body.' })
+            sendJson(res, 200, await refreshCostBasis(address))
+            return
+          }
+          sendJson(res, 405, { error: 'Method not allowed' })
+        } catch (error) {
+          sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      })
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   // Vite only exposes VITE_-prefixed vars to import.meta.env; the dev
   // middlewares above run server-side code (api/_rpcHandler.ts,
-  // api/_walletsHandler.ts) that reads plain process.env, same as it will
-  // on Vercel. Loading .env into process.env here keeps local dev and
-  // production behaving the same way.
+  // api/_walletsHandler.ts, api/_costBasisHandler.ts) that reads plain
+  // process.env, same as it will on Vercel. Loading .env into process.env
+  // here keeps local dev and production behaving the same way.
   Object.assign(process.env, loadEnv(mode, process.cwd(), ''))
 
   return {
-    plugins: [react(), rpcDevProxy(), walletsDevProxy()],
+    plugins: [react(), rpcDevProxy(), walletsDevProxy(), costBasisDevProxy()],
   }
 })

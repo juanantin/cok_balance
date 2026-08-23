@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/cost-basis.ts": {
+      "maxDuration": 60
+    }
+  }
+}

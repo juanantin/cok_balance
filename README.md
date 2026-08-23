@@ -12,6 +12,8 @@ balances across a list of Solana wallets, plus $COK's live market stats.
 - The wallet list is shared, not per-browser: it's stored server-side, so
   everyone who opens the app sees the same list, and an add/remove is visible
   to all visitors (not just localStorage on one device).
+- **Invested** column: a best-effort estimate of SOL spent acquiring $COK,
+  computed on demand (see below) - not automatic, since it's expensive.
 
 ## Architecture
 
@@ -37,6 +39,40 @@ below behave the same locally as they will on Vercel.
 
 $COK (and SOL) market stats are fetched directly from Dexscreener's public
 API client-side, since it's already CORS-enabled and requires no key.
+
+### Invested (cost-basis estimate)
+
+There's no historical price feed for a token like $COK, so an accurate,
+fully-automatic "amount invested" isn't possible. Instead, clicking
+**Calculate** (per wallet) or **Calculate invested** (all wallets, one at a
+time) via `/api/cost-basis` (`api/cost-basis.ts` + `api/_costBasisHandler.ts`)
+scans the wallet's last 100 $COK transactions and sums the SOL that left the
+wallet in the same atomic transaction $COK arrived - i.e. an on-chain swap.
+
+What this does and doesn't capture:
+
+- ✅ Buying $COK on-chain with SOL (a Jupiter/Raydium/etc. swap)
+- ❌ Buying with USDC or another token (no SOL leg to price it against)
+- ❌ Depositing $COK withdrawn from a CEX (arrives with no matching outflow)
+- ❌ Receiving $COK transferred from another wallet (same reason - and
+  deliberately not guessed at, since it might be a transfer between two of
+  your own tracked wallets, which isn't new investment)
+- Only the most recent 100 transactions on the wallet's $COK token account
+  are scanned; older activity beyond that is invisible to it (shown as `*`
+  when this cap was hit)
+
+So the number is a **lower bound**, not a precise cost basis - it undercounts
+whenever $COK arrived by a path other than an on-chain SOL swap. Results are
+cached (in the same Upstash store as the wallet list) so they persist and
+don't recompute on every page load; use the ↻ next to a computed value, or
+**Calculate invested** again, to refresh it.
+
+This is also the slowest and most rate-limit-sensitive thing the app does -
+each signature needs its own `getTransaction` call, a method public RPCs
+throttle harder than balance checks. A dedicated `SOLANA_RPC_URL` (see below)
+is close to required for this to work at all reliably; `vercel.json` also
+raises this specific function's timeout to 60s since scanning 100
+transactions can take a while.
 
 ## Development
 

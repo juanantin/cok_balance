@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AddWalletForm } from './components/AddWalletForm'
+import { fetchCachedCostBasis, refreshCostBasis } from './lib/costBasis'
+import type { CostBasisResult } from './lib/costBasis'
 import { fetchTokenStats } from './lib/dexscreener'
 import type { TokenStats } from './lib/dexscreener'
 import { fetchAllBalances, fetchWalletBalance, SOL_MINT, TOKEN_MINT } from './lib/solana'
@@ -33,15 +35,6 @@ function formatUsd(value: number | null | undefined): string {
   }).format(value)
 }
 
-function formatPrice(value: number | null | undefined): string {
-  if (value == null) return '—'
-  return Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: value < 1 ? 6 : 2,
-  }).format(value)
-}
-
 function computeUsdValue(
   balance: WalletBalance,
   solPriceUsd: number | null | undefined,
@@ -68,6 +61,9 @@ function App() {
   const [solStats, setSolStats] = useState<TokenStats | null>(null)
   const [tokenStatsError, setTokenStatsError] = useState<string | null>(null)
   const [tokenStatsLoading, setTokenStatsLoading] = useState(false)
+  const [costBasis, setCostBasis] = useState<Record<string, CostBasisResult | null>>({})
+  const [costBasisLoading, setCostBasisLoading] = useState<Record<string, boolean>>({})
+  const [costBasisErrors, setCostBasisErrors] = useState<Record<string, string>>({})
 
   useEffect(() => {
     fetchWallets()
@@ -136,6 +132,51 @@ function App() {
     refreshTokenStats()
   }, [refreshTokenStats])
 
+  // Loads whatever's already cached for newly-seen wallets. Cheap (one KV
+  // read, no RPC calls) so this is safe to do automatically; the expensive
+  // on-chain recompute only ever runs when the user clicks Calculate.
+  useEffect(() => {
+    const unfetched = wallets.filter((w) => !(w.address in costBasis))
+    unfetched.forEach((wallet) => {
+      fetchCachedCostBasis(wallet.address)
+        .then((result) => setCostBasis((prev) => ({ ...prev, [wallet.address]: result })))
+        .catch((error) =>
+          setCostBasisErrors((prev) => ({
+            ...prev,
+            [wallet.address]: error instanceof Error ? error.message : String(error),
+          }))
+        )
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallets])
+
+  const calculateCostBasis = useCallback(async (address: string) => {
+    setCostBasisLoading((prev) => ({ ...prev, [address]: true }))
+    setCostBasisErrors((prev) => {
+      const next = { ...prev }
+      delete next[address]
+      return next
+    })
+    try {
+      const result = await refreshCostBasis(address)
+      setCostBasis((prev) => ({ ...prev, [address]: result }))
+    } catch (error) {
+      setCostBasisErrors((prev) => ({ ...prev, [address]: error instanceof Error ? error.message : String(error) }))
+    } finally {
+      setCostBasisLoading((prev) => ({ ...prev, [address]: false }))
+    }
+  }, [])
+
+  const calculateAllCostBasis = useCallback(async () => {
+    // Sequential on purpose: each call already scans up to 100
+    // transactions server-side, so firing all wallets at once would pile
+    // concurrent heavy RPC calls onto the same endpoint and invite more
+    // rate-limiting, not less.
+    for (const wallet of wallets) {
+      await calculateCostBasis(wallet.address)
+    }
+  }, [wallets, calculateCostBasis])
+
   async function handleAddWallet(name: string, address: string) {
     const wallet: Wallet = { id: makeWalletId(), name, address }
     const next = [...wallets, wallet]
@@ -189,7 +230,22 @@ function App() {
     { sol: 0, token: 0, hasSol: false, hasToken: false }
   )
 
+  const investedTotals = wallets.reduce(
+    (acc, wallet) => {
+      const cb = costBasis[wallet.address]
+      if (cb) {
+        acc.investedSol += cb.investedSol
+        acc.hasAny = true
+      } else {
+        acc.allCalculated = false
+      }
+      return acc
+    },
+    { investedSol: 0, hasAny: false, allCalculated: true }
+  )
+
   const anyLoading = wallets.some((w) => balances[w.id]?.loading)
+  const costBasisAnyLoading = wallets.some((w) => costBasisLoading[w.address])
 
   const sortedWallets = [...wallets].sort((a, b) => {
     const tokenA = balances[a.id]?.token ?? -Infinity
@@ -219,6 +275,14 @@ function App() {
           <button className="btn btn-ghost" onClick={refreshAll} disabled={anyLoading || tokenStatsLoading}>
             {anyLoading || tokenStatsLoading ? 'Refreshing…' : 'Refresh all'}
           </button>
+          <button
+            className="btn btn-ghost"
+            onClick={calculateAllCostBasis}
+            disabled={costBasisAnyLoading || wallets.length === 0}
+            title="Best-effort estimate from on-chain swaps only - see Invested column"
+          >
+            {costBasisAnyLoading ? 'Calculating…' : 'Calculate invested'}
+          </button>
           <button className="btn btn-primary" onClick={() => setShowAddForm(true)}>
             + Add wallet
           </button>
@@ -226,12 +290,6 @@ function App() {
       </header>
 
       <div className="stats-grid">
-        <div className="stat-card">
-          <span className="stat-label">Price</span>
-          <span className="stat-value">
-            {tokenStatsLoading && !tokenStats ? <span className="spinner" /> : formatPrice(tokenStats?.priceUsd)}
-          </span>
-        </div>
         <div className="stat-card">
           <span className="stat-label">Market Cap</span>
           <span className="stat-value">
@@ -282,12 +340,18 @@ function App() {
               <th className="num">${TOKEN_SYMBOL}</th>
               <th className="num">$ Value</th>
               <th className="num">% Supply</th>
+              <th className="num" title="Best-effort: SOL spent in on-chain swaps only, last 100 txns">
+                Invested
+              </th>
               <th></th>
             </tr>
           </thead>
           <tbody>
             {sortedWallets.map((wallet) => {
               const balance = balances[wallet.id] ?? EMPTY_BALANCE
+              const cb = costBasis[wallet.address]
+              const cbLoading = costBasisLoading[wallet.address]
+              const cbError = costBasisErrors[wallet.address]
               return (
                 <tr key={wallet.id}>
                   <td className="name-cell">{wallet.name}</td>
@@ -312,6 +376,37 @@ function App() {
                   </td>
                   <td className="num">
                     {balance.loading ? <span className="spinner" /> : formatSupplyShare(balance.token)}
+                  </td>
+                  <td className="num invested-cell">
+                    {cbLoading ? (
+                      <span className="spinner" />
+                    ) : cb ? (
+                      <div className="invested-value">
+                        <div>
+                          <span>{formatAmount(cb.investedSol, 2)} SOL</span>
+                          {cb.truncated && (
+                            <span title={`Only the last ${cb.signaturesScanned} transactions were scanned`}> *</span>
+                          )}
+                        </div>
+                        <div className="invested-usd">
+                          {formatUsd(solStats?.priceUsd != null ? cb.investedSol * solStats.priceUsd : null)}
+                        </div>
+                        <button
+                          className="icon-btn invested-recalc"
+                          title="Recalculate"
+                          onClick={() => calculateCostBasis(wallet.address)}
+                        >
+                          ↻
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <button className="link-btn" onClick={() => calculateCostBasis(wallet.address)}>
+                          Calculate
+                        </button>
+                        {cbError && <div className="invested-error" title={cbError}>failed</div>}
+                      </>
+                    )}
                   </td>
                   <td className="row-actions">
                     <button
@@ -343,6 +438,23 @@ function App() {
                 )}
               </td>
               <td className="num">{formatSupplyShare(totals.hasToken ? totals.token : null)}</td>
+              <td className="num invested-cell">
+                {investedTotals.hasAny ? (
+                  <div className="invested-value">
+                    <div>
+                      {formatAmount(investedTotals.investedSol, 2)} SOL
+                      {!investedTotals.allCalculated && <span title="Not all wallets calculated yet"> *</span>}
+                    </div>
+                    <div className="invested-usd">
+                      {formatUsd(
+                        solStats?.priceUsd != null ? investedTotals.investedSol * solStats.priceUsd : null
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  '—'
+                )}
+              </td>
               <td></td>
             </tr>
           </tfoot>

@@ -1,3 +1,5 @@
+import { kvGet, kvSet } from './_kv.js'
+
 export interface StoredWallet {
   id: string
   name: string
@@ -16,40 +18,14 @@ const DEFAULT_WALLETS: StoredWallet[] = [
 const KV_KEY = 'cok-balance-wallets'
 const MAX_WALLETS = 200
 
-// Strips accidental wrapping quotes/whitespace - a common paste artifact
-// when copying a value out of a .env-formatted display (KEY="value").
-function cleanEnvValue(value: string): string {
-  return value.trim().replace(/^['"]|['"]$/g, '')
-}
-
-function restConfig(): { url: string; token: string } {
-  const rawUrl = process.env.UPSTASH_REDIS_REST_URL
-  const rawToken = process.env.UPSTASH_REDIS_REST_TOKEN
-  if (!rawUrl || !rawToken) {
-    throw new Error(
-      'Wallet storage isn\'t configured: set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (see README).'
-    )
-  }
-  return { url: cleanEnvValue(rawUrl), token: cleanEnvValue(rawToken) }
-}
-
 /**
  * Shared wallet list, stored server-side in Upstash Redis (one JSON blob
  * under a single key) instead of the browser's localStorage, so every
  * visitor sees and edits the same list rather than each browser having
- * its own. Plain REST calls, no SDK - Upstash's free tier is more than
- * enough for this.
+ * its own.
  */
 export async function getWallets(): Promise<StoredWallet[]> {
-  const { url, token } = restConfig()
-  const res = await fetch(`${url}/get/${KV_KEY}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  if (!res.ok) {
-    throw new Error(`Wallet storage read failed (${res.status})`)
-  }
-
-  const { result } = (await res.json()) as { result: string | null }
+  const result = await kvGet(KV_KEY)
   if (!result) return DEFAULT_WALLETS
 
   try {
@@ -75,15 +51,6 @@ export async function saveWallets(body: unknown): Promise<StoredWallet[]> {
     throw new Error('Invalid wallet list.')
   }
 
-  const { url, token } = restConfig()
-  const res = await fetch(`${url}/set/${KV_KEY}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
-    throw new Error(`Wallet storage write failed (${res.status})`)
-  }
-
+  await kvSet(KV_KEY, JSON.stringify(body))
   return body
 }

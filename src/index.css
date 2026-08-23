@@ -109,7 +109,7 @@ body {
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 12px;
   margin-bottom: 24px;
 }
@@ -260,6 +260,48 @@ body {
 .icon-btn:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.invested-cell {
+  min-width: 110px;
+}
+
+.invested-value {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.invested-usd {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+}
+
+.invested-recalc {
+  width: 22px;
+  height: 22px;
+  font-size: 0.78rem;
+  flex-shrink: 0;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--accent-hover);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
+}
+
+.invested-error {
+  color: var(--danger);
+  font-size: 0.75rem;
+  cursor: help;
 }
 
 .wallet-table tfoot .total-row td {

@@ -11,7 +11,7 @@ const FALLBACK_RPC_URLS = [
 const ALLOWED_METHODS = new Set(['getBalance', 'getTokenAccountsByOwner'])
 const REQUEST_TIMEOUT_MS = 8000
 
-interface JsonRpcRequest {
+export interface JsonRpcRequest {
   jsonrpc: string
   id: number | string
   method: string
@@ -70,6 +70,31 @@ async function callEndpoint(url: string, requests: JsonRpcRequest[]): Promise<un
   )
 }
 
+function candidateRpcUrls(): string[] {
+  const configuredUrl = process.env.SOLANA_RPC_URL
+  return configuredUrl ? [cleanEnvValue(configuredUrl), ...FALLBACK_RPC_URLS] : FALLBACK_RPC_URLS
+}
+
+/**
+ * Runs a batch of JSON-RPC requests against the configured endpoint(s),
+ * walking the fallback list until one answers every request in the batch
+ * successfully. No method allowlist - for trusted, server-side-only
+ * callers (see proxyRpc below for the client-facing, validated version).
+ */
+export async function callRpcBatch(requests: JsonRpcRequest[]): Promise<unknown[]> {
+  const failures: string[] = []
+
+  for (const url of candidateRpcUrls()) {
+    try {
+      return await callEndpoint(url, requests)
+    } catch (error) {
+      failures.push(`${hostOf(url)} → ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  throw new Error(`All RPC endpoints failed: ${failures.join('; ')}`)
+}
+
 /**
  * Forwards a batch of JSON-RPC requests to a Solana RPC endpoint on the
  * server side. Kept behind this proxy (rather than calling the RPC
@@ -91,22 +116,10 @@ export async function proxyRpc(body: unknown): Promise<ProxyResult> {
     return { status: 400, body: { error: 'Request contains an unsupported RPC method.' } }
   }
 
-  const configuredUrl = process.env.SOLANA_RPC_URL
-  const candidates = configuredUrl ? [cleanEnvValue(configuredUrl), ...FALLBACK_RPC_URLS] : FALLBACK_RPC_URLS
-
-  const failures: string[] = []
-
-  for (const url of candidates) {
-    try {
-      const responses = await callEndpoint(url, requests as JsonRpcRequest[])
-      return { status: 200, body: responses }
-    } catch (error) {
-      failures.push(`${hostOf(url)} → ${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
-
-  return {
-    status: 502,
-    body: { error: `All RPC endpoints failed: ${failures.join('; ')}` },
+  try {
+    const responses = await callRpcBatch(requests as JsonRpcRequest[])
+    return { status: 200, body: responses }
+  } catch (error) {
+    return { status: 502, body: { error: error instanceof Error ? error.message : String(error) } }
   }
 }

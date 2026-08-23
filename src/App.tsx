@@ -431,11 +431,18 @@ function App() {
                       <span className="spinner" />
                     ) : cb ? (
                       <div className="invested-value">
-                        <span>
+                        <span
+                          className={cb.tokensAcquiredViaSwap === 0 ? 'invested-hint' : undefined}
+                          title={
+                            cb.tokensAcquiredViaSwap === 0
+                              ? `No on-chain SOL swap found in the last ${cb.signaturesScanned} $COK transactions - it may have arrived by transfer, CEX withdrawal, or a non-SOL swap`
+                              : cb.truncated
+                                ? `Only the last ${cb.signaturesScanned} transactions were scanned`
+                                : undefined
+                          }
+                        >
                           {formatUsd(solStats?.priceUsd != null ? cb.investedSol * solStats.priceUsd : null)}
-                          {cb.truncated && (
-                            <span title={`Only the last ${cb.signaturesScanned} transactions were scanned`}> *</span>
-                          )}
+                          {cb.truncated && ' *'}
                         </span>
                         <button
                           className="icon-btn invested-recalc"

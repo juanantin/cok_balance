@@ -8,12 +8,19 @@ import type { Wallet, WalletBalance } from './types'
 
 const TOKEN_NAME = 'Cat Own Kimono'
 const TOKEN_SYMBOL = 'COK'
+const TOKEN_SUPPLY = 1_000_000_000
 
 const EMPTY_BALANCE: WalletBalance = { sol: null, token: null, error: null, loading: false }
 
 function formatAmount(value: number | null, digits = 4): string {
   if (value === null) return '—'
   return value.toLocaleString(undefined, { maximumFractionDigits: digits })
+}
+
+function formatSupplyShare(token: number | null): string {
+  if (token === null) return '—'
+  const share = (token / TOKEN_SUPPLY) * 100
+  return `${share.toLocaleString(undefined, { maximumFractionDigits: share < 1 ? 3 : 2 })}%`
 }
 
 function formatUsd(value: number | null | undefined): string {
@@ -231,6 +238,7 @@ function App() {
               <th>Address</th>
               <th className="num">SOL</th>
               <th className="num">${TOKEN_SYMBOL}</th>
+              <th className="num">% Supply</th>
               <th></th>
             </tr>
           </thead>
@@ -250,7 +258,10 @@ function App() {
                     {balance.loading ? <span className="spinner" /> : formatAmount(balance.sol)}
                   </td>
                   <td className="num">
-                    {balance.loading ? <span className="spinner" /> : formatAmount(balance.token, 2)}
+                    {balance.loading ? <span className="spinner" /> : formatAmount(balance.token, 0)}
+                  </td>
+                  <td className="num">
+                    {balance.loading ? <span className="spinner" /> : formatSupplyShare(balance.token)}
                   </td>
                   <td className="row-actions">
                     <button
@@ -270,10 +281,11 @@ function App() {
             })}
           </tbody>
           <tfoot>
-            <tr>
+            <tr className="total-row">
               <td colSpan={2}>Total</td>
               <td className="num">{formatAmount(totals.hasSol ? totals.sol : null)}</td>
-              <td className="num">{formatAmount(totals.hasToken ? totals.token : null, 2)}</td>
+              <td className="num">{formatAmount(totals.hasToken ? totals.token : null, 0)}</td>
+              <td className="num">{formatSupplyShare(totals.hasToken ? totals.token : null)}</td>
               <td></td>
             </tr>
           </tfoot>

@@ -254,11 +254,21 @@ body {
   cursor: default;
 }
 
-.wallet-table tfoot td {
-  padding: 14px 16px;
-  border-top: 1px solid var(--border);
-  font-weight: 600;
+.wallet-table tfoot .total-row td {
+  padding: 16px;
+  border-top: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  font-weight: 700;
+  font-size: 1.02rem;
   color: var(--text);
+}
+
+.wallet-table tfoot .total-row td:first-child {
+  border-radius: 0 0 0 12px;
+}
+
+.wallet-table tfoot .total-row td:last-child {
+  border-radius: 0 0 12px 0;
 }
 
 .spinner {

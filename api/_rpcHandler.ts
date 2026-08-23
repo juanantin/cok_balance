@@ -33,6 +33,12 @@ function isValidRequest(value: unknown): value is JsonRpcRequest {
   )
 }
 
+// Strips accidental wrapping quotes/whitespace - a common paste artifact
+// when copying a value out of a .env-formatted display (KEY="value").
+function cleanEnvValue(value: string): string {
+  return value.trim().replace(/^['"]|['"]$/g, '')
+}
+
 function hostOf(url: string): string {
   try {
     return new URL(url).host
@@ -86,7 +92,7 @@ export async function proxyRpc(body: unknown): Promise<ProxyResult> {
   }
 
   const configuredUrl = process.env.SOLANA_RPC_URL
-  const candidates = configuredUrl ? [configuredUrl, ...FALLBACK_RPC_URLS] : FALLBACK_RPC_URLS
+  const candidates = configuredUrl ? [cleanEnvValue(configuredUrl), ...FALLBACK_RPC_URLS] : FALLBACK_RPC_URLS
 
   const failures: string[] = []
 

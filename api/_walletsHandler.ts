@@ -16,15 +16,21 @@ const DEFAULT_WALLETS: StoredWallet[] = [
 const KV_KEY = 'cok-balance-wallets'
 const MAX_WALLETS = 200
 
+// Strips accidental wrapping quotes/whitespace - a common paste artifact
+// when copying a value out of a .env-formatted display (KEY="value").
+function cleanEnvValue(value: string): string {
+  return value.trim().replace(/^['"]|['"]$/g, '')
+}
+
 function restConfig(): { url: string; token: string } {
-  const url = process.env.UPSTASH_REDIS_REST_URL
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN
-  if (!url || !token) {
+  const rawUrl = process.env.UPSTASH_REDIS_REST_URL
+  const rawToken = process.env.UPSTASH_REDIS_REST_TOKEN
+  if (!rawUrl || !rawToken) {
     throw new Error(
       'Wallet storage isn\'t configured: set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (see README).'
     )
   }
-  return { url, token }
+  return { url: cleanEnvValue(rawUrl), token: cleanEnvValue(rawToken) }
 }
 
 /**

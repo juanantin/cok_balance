@@ -20,8 +20,7 @@ function formatAmount(value: number | null, digits = 4): string {
 function formatSupplyShare(token: number | null): string {
   if (token === null) return '—'
   const share = (token / TOKEN_SUPPLY) * 100
-  const digits = share === 0 ? 0 : share < 0.01 ? 6 : share < 1 ? 4 : 2
-  return `${share.toLocaleString(undefined, { maximumFractionDigits: digits })}%`
+  return `${share.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`
 }
 
 function formatUsd(value: number | null | undefined): string {

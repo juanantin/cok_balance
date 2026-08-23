@@ -161,6 +161,12 @@ function App() {
 
   const anyLoading = wallets.some((w) => balances[w.id]?.loading)
 
+  const sortedWallets = [...wallets].sort((a, b) => {
+    const tokenA = balances[a.id]?.token ?? -Infinity
+    const tokenB = balances[b.id]?.token ?? -Infinity
+    return tokenB - tokenA
+  })
+
   return (
     <div className="page">
       <header className="page-header">
@@ -243,7 +249,7 @@ function App() {
             </tr>
           </thead>
           <tbody>
-            {wallets.map((wallet) => {
+            {sortedWallets.map((wallet) => {
               const balance = balances[wallet.id] ?? EMPTY_BALANCE
               return (
                 <tr key={wallet.id}>

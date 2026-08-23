@@ -296,20 +296,23 @@ function App() {
   return (
     <div className="page">
       <header className="page-header">
-        <div>
-          <h1>COK Wallet Balances</h1>
-          <p className="subtitle">
-            SOL and{' '}
-            <a
-              href={tokenStats?.url ?? `https://solscan.io/token/${TOKEN_MINT}`}
-              target="_blank"
-              rel="noreferrer"
-              className="mint-link"
-            >
-              {TOKEN_NAME} (${TOKEN_SYMBOL})
-            </a>{' '}
-            balances for {shortenAddress(TOKEN_MINT)}
-          </p>
+        <div className="title-group">
+          <img src="/logo.png" alt="" className="logo" width={48} height={48} />
+          <div>
+            <h1>COK Wallet Balances</h1>
+            <p className="subtitle">
+              SOL and{' '}
+              <a
+                href={tokenStats?.url ?? `https://solscan.io/token/${TOKEN_MINT}`}
+                target="_blank"
+                rel="noreferrer"
+                className="mint-link"
+              >
+                {TOKEN_NAME} (${TOKEN_SYMBOL})
+              </a>{' '}
+              balances for {shortenAddress(TOKEN_MINT)}
+            </p>
+          </div>
         </div>
         <div className="header-actions">
           <button className="btn btn-ghost" onClick={refreshAll} disabled={anyLoading || tokenStatsLoading}>

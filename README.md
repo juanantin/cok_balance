@@ -62,7 +62,9 @@ calculated wallets, not an average of the per-wallet averages.
 
 What this does and doesn't capture:
 
-- ✅ Buying $COK on-chain with SOL (a Jupiter/Raydium/etc. swap)
+- ✅ Buying $COK on-chain with SOL - a DEX swap (Jupiter/Raydium/etc.) or a
+  bonding-curve launchpad buy (pump.fun, fomo.family, etc.), whether the
+  spend comes from native SOL or a wrapped-SOL (WSOL) token balance
 - ❌ Buying with USDC or another token (no SOL leg to price it against)
 - ❌ Depositing $COK withdrawn from a CEX (arrives with no matching outflow)
 - ❌ Receiving $COK transferred from another wallet (same reason - and

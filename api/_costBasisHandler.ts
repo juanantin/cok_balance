@@ -3,6 +3,7 @@ import { callRpcBatch } from './_rpcHandler.js'
 import type { JsonRpcRequest } from './_rpcHandler.js'
 
 const TOKEN_MINT = 'Dnb9dLSXxAarXVexehzeH8W8nFmLMNJSuGoaddZSwtog'
+const WSOL_MINT = 'So11111111111111111111111111111111111111112'
 
 // How far back to scan. Every signature needs its own getTransaction call
 // (a "heavy" RPC method many providers rate-limit harder than getBalance),
@@ -57,14 +58,28 @@ interface ParsedTransaction {
   } | null
 }
 
+function tokenDeltaFor(
+  mint: string,
+  owner: string,
+  meta: NonNullable<ParsedTransaction['meta']>
+): number {
+  const pre = meta.preTokenBalances?.find((b) => b.owner === owner && b.mint === mint)
+  const post = meta.postTokenBalances?.find((b) => b.owner === owner && b.mint === mint)
+  return (post?.uiTokenAmount.uiAmount ?? 0) - (pre?.uiTokenAmount.uiAmount ?? 0)
+}
+
 /**
  * Best-effort "initial investment" for a wallet: sums the SOL spent in
  * transactions where SOL left the wallet and $COK arrived in the SAME
- * atomic transaction (an on-chain swap). This only prices on-chain swaps -
- * a CEX withdrawal, a USDC-denominated buy, or a transfer from another
- * wallet all show up as $COK arriving with no matching SOL outflow, so
- * they're left out rather than guessed at. Scoped to the most recent
- * SIGNATURE_LIMIT transactions on the wallet's $COK token account.
+ * atomic transaction (an on-chain swap). "SOL spent" counts either the
+ * wallet's native balance or a wrapped-SOL (WSOL) token balance dropping -
+ * bonding-curve launchpads (pump.fun, fomo.family, etc.) commonly debit a
+ * persistent WSOL account rather than native lamports, which would
+ * otherwise look like a plain transfer. A CEX withdrawal, a
+ * USDC-denominated buy, or a transfer from another wallet still show up
+ * as $COK arriving with no matching outflow either way, so those are left
+ * out rather than guessed at. Scoped to the most recent SIGNATURE_LIMIT
+ * transactions on the wallet's $COK token account.
  */
 export async function computeCostBasis(address: string): Promise<CostBasisResult> {
   const tokenAccounts = (await rpc('getTokenAccountsByOwner', [
@@ -101,15 +116,20 @@ export async function computeCostBasis(address: string): Promise<CostBasisResult
     const walletIdx = accountKeys.indexOf(address)
     if (walletIdx === -1) return
 
-    const solDelta = (tx.meta.postBalances[walletIdx] - tx.meta.preBalances[walletIdx]) / 1e9
+    const nativeSolDelta = (tx.meta.postBalances[walletIdx] - tx.meta.preBalances[walletIdx]) / 1e9
+    const wsolDelta = tokenDeltaFor(WSOL_MINT, address, tx.meta)
+    const tokenDelta = tokenDeltaFor(TOKEN_MINT, address, tx.meta)
 
-    const preTok = tx.meta.preTokenBalances?.find((b) => b.owner === address && b.mint === TOKEN_MINT)
-    const postTok = tx.meta.postTokenBalances?.find((b) => b.owner === address && b.mint === TOKEN_MINT)
-    const tokenDelta = (postTok?.uiTokenAmount.uiAmount ?? 0) - (preTok?.uiTokenAmount.uiAmount ?? 0)
+    // "SOL spent" can come from native lamports, a WSOL token balance, or
+    // both at once (e.g. a top-up wrap in the same tx as the spend) - sum
+    // whichever side(s) show a real (non-fee-sized) decrease.
+    let solSpent = 0
+    if (nativeSolDelta < -MIN_SOL_SPENT_TO_COUNT_AS_BUY) solSpent += -nativeSolDelta
+    if (wsolDelta < -MIN_SOL_SPENT_TO_COUNT_AS_BUY) solSpent += -wsolDelta
 
     // Only count it as a buy when SOL clearly left and $COK arrived together.
-    if (tokenDelta > 0 && solDelta < -MIN_SOL_SPENT_TO_COUNT_AS_BUY) {
-      investedSol += -solDelta
+    if (tokenDelta > 0 && solSpent > 0) {
+      investedSol += solSpent
       tokensAcquiredViaSwap += tokenDelta
     }
   })

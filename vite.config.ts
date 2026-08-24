@@ -92,6 +92,26 @@ function costBasisDevProxy(): Plugin {
   }
 }
 
+// Mirrors api/cost-basis-debug.ts for the same reason.
+function costBasisDebugDevProxy(): Plugin {
+  return {
+    name: 'cost-basis-debug-dev-proxy',
+    configureServer(server) {
+      server.middlewares.use('/api/cost-basis-debug', async (req, res) => {
+        if (req.method !== 'GET') return sendJson(res, 405, { error: 'Method not allowed' })
+        try {
+          const address = new URL(req.url ?? '', 'http://localhost').searchParams.get('address')
+          if (!address) return sendJson(res, 400, { error: 'Missing "address" query param.' })
+          const { debugCostBasis } = await server.ssrLoadModule('/api/_costBasisHandler.ts')
+          sendJson(res, 200, await debugCostBasis(address))
+        } catch (error) {
+          sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      })
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   // Vite only exposes VITE_-prefixed vars to import.meta.env; the dev
@@ -102,6 +122,6 @@ export default defineConfig(({ mode }) => {
   Object.assign(process.env, loadEnv(mode, process.cwd(), ''))
 
   return {
-    plugins: [react(), rpcDevProxy(), walletsDevProxy(), costBasisDevProxy()],
+    plugins: [react(), rpcDevProxy(), walletsDevProxy(), costBasisDevProxy(), costBasisDebugDevProxy()],
   }
 })

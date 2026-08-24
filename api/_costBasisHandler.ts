@@ -26,6 +26,20 @@ export interface CostBasisResult {
   computedAt: number
 }
 
+export interface CostBasisDebugEntry {
+  signature: string
+  error: string | null
+  nativeSolDelta: number | null
+  wsolDelta: number | null
+  tokenDelta: number | null
+  solSpent: number | null
+  counted: boolean
+}
+
+export interface CostBasisDebugResult extends CostBasisResult {
+  entries: CostBasisDebugEntry[]
+}
+
 async function rpc(method: string, params: unknown[]): Promise<unknown> {
   const request: JsonRpcRequest = { jsonrpc: '2.0', id: 0, method, params }
   const [response] = await callRpcBatch([request])
@@ -58,14 +72,85 @@ interface ParsedTransaction {
   } | null
 }
 
-function tokenDeltaFor(
-  mint: string,
-  owner: string,
-  meta: NonNullable<ParsedTransaction['meta']>
-): number {
+function tokenDeltaFor(mint: string, owner: string, meta: NonNullable<ParsedTransaction['meta']>): number {
   const pre = meta.preTokenBalances?.find((b) => b.owner === owner && b.mint === mint)
   const post = meta.postTokenBalances?.find((b) => b.owner === owner && b.mint === mint)
   return (post?.uiTokenAmount.uiAmount ?? 0) - (pre?.uiTokenAmount.uiAmount ?? 0)
+}
+
+async function evaluateSignature(address: string, signature: string): Promise<CostBasisDebugEntry> {
+  const base = { signature, nativeSolDelta: null, wsolDelta: null, tokenDelta: null, solSpent: null, counted: false }
+  try {
+    const tx = (await rpc('getTransaction', [
+      signature,
+      { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 },
+    ])) as ParsedTransaction | null
+    if (!tx?.meta) return { ...base, error: 'no transaction/meta returned' }
+
+    const staticKeys = tx.transaction.message.accountKeys.map((k) => (typeof k === 'string' ? k : k.pubkey))
+    const accountKeys = [
+      ...staticKeys,
+      ...(tx.meta.loadedAddresses?.writable ?? []),
+      ...(tx.meta.loadedAddresses?.readonly ?? []),
+    ]
+    const walletIdx = accountKeys.indexOf(address)
+    if (walletIdx === -1) return { ...base, error: 'wallet address not found in this transaction\'s account keys' }
+
+    const nativeSolDelta = (tx.meta.postBalances[walletIdx] - tx.meta.preBalances[walletIdx]) / 1e9
+    const wsolDelta = tokenDeltaFor(WSOL_MINT, address, tx.meta)
+    const tokenDelta = tokenDeltaFor(TOKEN_MINT, address, tx.meta)
+
+    // "SOL spent" can come from native lamports, a WSOL token balance, or
+    // both at once (e.g. a top-up wrap in the same tx as the spend) - sum
+    // whichever side(s) show a real (non-fee-sized) decrease.
+    let solSpent = 0
+    if (nativeSolDelta < -MIN_SOL_SPENT_TO_COUNT_AS_BUY) solSpent += -nativeSolDelta
+    if (wsolDelta < -MIN_SOL_SPENT_TO_COUNT_AS_BUY) solSpent += -wsolDelta
+
+    const counted = tokenDelta > 0 && solSpent > 0
+    return { signature, error: null, nativeSolDelta, wsolDelta, tokenDelta, solSpent, counted }
+  } catch (error) {
+    return { ...base, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+async function scanSignatures(address: string): Promise<{ ata: string | null; entries: CostBasisDebugEntry[] }> {
+  const tokenAccounts = (await rpc('getTokenAccountsByOwner', [
+    address,
+    { mint: TOKEN_MINT },
+    { encoding: 'jsonParsed' },
+  ])) as { value: Array<{ pubkey: string }> }
+
+  const ata = tokenAccounts.value[0]?.pubkey ?? null
+  if (!ata) return { ata: null, entries: [] }
+
+  const signatures = (await rpc('getSignaturesForAddress', [ata, { limit: SIGNATURE_LIMIT }])) as Array<{
+    signature: string
+  }>
+
+  const entries = await mapWithConcurrency(signatures, TX_FETCH_CONCURRENCY, ({ signature }) =>
+    evaluateSignature(address, signature)
+  )
+  return { ata, entries }
+}
+
+function summarize(address: string, entries: CostBasisDebugEntry[]): CostBasisResult {
+  let investedSol = 0
+  let tokensAcquiredViaSwap = 0
+  for (const e of entries) {
+    if (e.counted) {
+      investedSol += e.solSpent ?? 0
+      tokensAcquiredViaSwap += e.tokenDelta ?? 0
+    }
+  }
+  return {
+    address,
+    investedSol,
+    tokensAcquiredViaSwap,
+    signaturesScanned: entries.length,
+    truncated: entries.length >= SIGNATURE_LIMIT,
+    computedAt: Date.now(),
+  }
 }
 
 /**
@@ -82,66 +167,18 @@ function tokenDeltaFor(
  * transactions on the wallet's $COK token account.
  */
 export async function computeCostBasis(address: string): Promise<CostBasisResult> {
-  const tokenAccounts = (await rpc('getTokenAccountsByOwner', [
-    address,
-    { mint: TOKEN_MINT },
-    { encoding: 'jsonParsed' },
-  ])) as { value: Array<{ pubkey: string }> }
+  const { entries } = await scanSignatures(address)
+  return summarize(address, entries)
+}
 
-  const ata = tokenAccounts.value[0]?.pubkey
-  if (!ata) {
-    return { address, investedSol: 0, tokensAcquiredViaSwap: 0, signaturesScanned: 0, truncated: false, computedAt: Date.now() }
-  }
-
-  const signatures = (await rpc('getSignaturesForAddress', [ata, { limit: SIGNATURE_LIMIT }])) as Array<{
-    signature: string
-  }>
-
-  let investedSol = 0
-  let tokensAcquiredViaSwap = 0
-
-  await mapWithConcurrency(signatures, TX_FETCH_CONCURRENCY, async ({ signature }) => {
-    const tx = (await rpc('getTransaction', [
-      signature,
-      { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 },
-    ]).catch(() => null)) as ParsedTransaction | null
-    if (!tx?.meta) return
-
-    const staticKeys = tx.transaction.message.accountKeys.map((k) => (typeof k === 'string' ? k : k.pubkey))
-    const accountKeys = [
-      ...staticKeys,
-      ...(tx.meta.loadedAddresses?.writable ?? []),
-      ...(tx.meta.loadedAddresses?.readonly ?? []),
-    ]
-    const walletIdx = accountKeys.indexOf(address)
-    if (walletIdx === -1) return
-
-    const nativeSolDelta = (tx.meta.postBalances[walletIdx] - tx.meta.preBalances[walletIdx]) / 1e9
-    const wsolDelta = tokenDeltaFor(WSOL_MINT, address, tx.meta)
-    const tokenDelta = tokenDeltaFor(TOKEN_MINT, address, tx.meta)
-
-    // "SOL spent" can come from native lamports, a WSOL token balance, or
-    // both at once (e.g. a top-up wrap in the same tx as the spend) - sum
-    // whichever side(s) show a real (non-fee-sized) decrease.
-    let solSpent = 0
-    if (nativeSolDelta < -MIN_SOL_SPENT_TO_COUNT_AS_BUY) solSpent += -nativeSolDelta
-    if (wsolDelta < -MIN_SOL_SPENT_TO_COUNT_AS_BUY) solSpent += -wsolDelta
-
-    // Only count it as a buy when SOL clearly left and $COK arrived together.
-    if (tokenDelta > 0 && solSpent > 0) {
-      investedSol += solSpent
-      tokensAcquiredViaSwap += tokenDelta
-    }
-  })
-
-  return {
-    address,
-    investedSol,
-    tokensAcquiredViaSwap,
-    signaturesScanned: signatures.length,
-    truncated: signatures.length >= SIGNATURE_LIMIT,
-    computedAt: Date.now(),
-  }
+/**
+ * Same scan as computeCostBasis, but returns the full per-transaction
+ * breakdown instead of just the totals - not cached, for troubleshooting
+ * only (e.g. "why did this wallet come out to $0").
+ */
+export async function debugCostBasis(address: string): Promise<CostBasisDebugResult> {
+  const { entries } = await scanSignatures(address)
+  return { ...summarize(address, entries), entries }
 }
 
 function kvKey(address: string): string {

@@ -12,6 +12,14 @@ const TOKEN_NAME = 'Cat Own Kimono'
 const TOKEN_SYMBOL = 'COK'
 const TOKEN_SUPPLY = 1_000_000_000_000
 
+// Manual overrides for wallets whose $COK purchase can't be detected
+// on-chain (e.g. bought via fomo.family, which converts an off-chain cash
+// balance to SOL internally - there's no on-chain SOL/WSOL debit to find).
+// Figures are fixed USD amounts, not derived from SOL price.
+const MANUAL_INVESTED_OVERRIDES: Record<string, { investedUsd: number; avgEntryMcUsd: number }> = {
+  AJK7CSkM2pjpKe9tMomexXP7kXemZPZo2aTtRvW1k3NR: { investedUsd: 3304.47, avgEntryMcUsd: 349_300 },
+}
+
 const EMPTY_BALANCE: WalletBalance = { sol: null, token: null, error: null, loading: false }
 
 function formatAmount(value: number | null, digits = 4): string {
@@ -56,6 +64,37 @@ function computeAvgEntryPriceUsd(
 // Market cap implied by a per-token price, at the fixed total supply.
 function priceToMarketCap(priceUsd: number | null): number | null {
   return priceUsd == null ? null : priceUsd * TOKEN_SUPPLY
+}
+
+interface EffectiveInvested {
+  investedUsd: number
+  avgEntryMcUsd: number | null
+  tokensAcquired: number
+  isManual: boolean
+}
+
+// Blends a manual override (fixed USD, see MANUAL_INVESTED_OVERRIDES) with
+// the on-chain-derived figure, so both flow through the same display and
+// totals logic below regardless of source.
+function getEffectiveInvested(
+  address: string,
+  cb: CostBasisResult | null | undefined,
+  solPriceUsd: number | null | undefined
+): EffectiveInvested | null {
+  const override = MANUAL_INVESTED_OVERRIDES[address]
+  if (override) {
+    const tokensAcquired =
+      override.avgEntryMcUsd > 0 ? (override.investedUsd * TOKEN_SUPPLY) / override.avgEntryMcUsd : 0
+    return { investedUsd: override.investedUsd, avgEntryMcUsd: override.avgEntryMcUsd, tokensAcquired, isManual: true }
+  }
+  if (!cb || solPriceUsd == null) return null
+  const avgEntryMcUsd = priceToMarketCap(computeAvgEntryPriceUsd(cb, solPriceUsd))
+  return {
+    investedUsd: cb.investedSol * solPriceUsd,
+    avgEntryMcUsd,
+    tokensAcquired: cb.tokensAcquiredViaSwap,
+    isManual: false,
+  }
 }
 
 function computeUsdValue(
@@ -176,8 +215,10 @@ function App() {
     // Sequential on purpose: each call already scans up to 100
     // transactions server-side, so firing all wallets at once would pile
     // concurrent heavy RPC calls onto the same endpoint and invite more
-    // rate-limiting, not less.
+    // rate-limiting, not less. Skips wallets with a manual override - no
+    // on-chain scan can improve on a fixed, already-known figure.
     for (const wallet of wallets) {
+      if (wallet.address in MANUAL_INVESTED_OVERRIDES) continue
       await calculateCostBasis(wallet.address)
     }
   }, [wallets, calculateCostBasis])
@@ -191,7 +232,7 @@ function App() {
     let cancelled = false
     async function run() {
       for (const wallet of wallets) {
-        if (cancelled || wallet.address in costBasis) continue
+        if (cancelled || wallet.address in costBasis || wallet.address in MANUAL_INVESTED_OVERRIDES) continue
         try {
           const cached = await fetchCachedCostBasis(wallet.address)
           if (cancelled) return
@@ -271,17 +312,17 @@ function App() {
 
   const investedTotals = wallets.reduce(
     (acc, wallet) => {
-      const cb = costBasis[wallet.address]
-      if (cb) {
-        acc.investedSol += cb.investedSol
-        acc.tokensAcquiredViaSwap += cb.tokensAcquiredViaSwap
+      const eff = getEffectiveInvested(wallet.address, costBasis[wallet.address], solStats?.priceUsd)
+      if (eff) {
+        acc.investedUsd += eff.investedUsd
+        acc.tokensAcquired += eff.tokensAcquired
         acc.hasAny = true
       } else {
         acc.allCalculated = false
       }
       return acc
     },
-    { investedSol: 0, tokensAcquiredViaSwap: 0, hasAny: false, allCalculated: true }
+    { investedUsd: 0, tokensAcquired: 0, hasAny: false, allCalculated: true }
   )
 
   const anyLoading = wallets.some((w) => balances[w.id]?.loading)
@@ -401,6 +442,7 @@ function App() {
               const cb = costBasis[wallet.address]
               const cbLoading = costBasisLoading[wallet.address]
               const cbError = costBasisErrors[wallet.address]
+              const eff = getEffectiveInvested(wallet.address, cb, solStats?.priceUsd)
               return (
                 <tr key={wallet.id}>
                   <td className="name-cell">{wallet.name}</td>
@@ -427,7 +469,11 @@ function App() {
                     {balance.loading ? <span className="spinner" /> : formatSupplyShare(balance.token)}
                   </td>
                   <td className="num invested-cell">
-                    {cbLoading ? (
+                    {eff?.isManual ? (
+                      <span className="invested-hint" title="Manually recorded - bought via fomo.family, not detectable on-chain">
+                        {formatUsd(eff.investedUsd)}
+                      </span>
+                    ) : cbLoading ? (
                       <span className="spinner" />
                     ) : cb ? (
                       <div className="invested-value">
@@ -441,7 +487,7 @@ function App() {
                                 : undefined
                           }
                         >
-                          {formatUsd(solStats?.priceUsd != null ? cb.investedSol * solStats.priceUsd : null)}
+                          {formatUsd(eff?.investedUsd)}
                           {cb.truncated && ' *'}
                         </span>
                         <button
@@ -461,10 +507,12 @@ function App() {
                     )}
                   </td>
                   <td className="num">
-                    {cbLoading ? (
+                    {eff?.isManual ? (
+                      formatUsd(eff.avgEntryMcUsd)
+                    ) : cbLoading ? (
                       <span className="spinner" />
                     ) : (
-                      formatUsd(priceToMarketCap(computeAvgEntryPriceUsd(cb, solStats?.priceUsd)))
+                      formatUsd(eff?.avgEntryMcUsd)
                     )}
                   </td>
                   <td className="row-actions">
@@ -500,7 +548,7 @@ function App() {
               <td className="num invested-cell">
                 {investedTotals.hasAny ? (
                   <>
-                    {formatUsd(solStats?.priceUsd != null ? investedTotals.investedSol * solStats.priceUsd : null)}
+                    {formatUsd(investedTotals.investedUsd)}
                     {!investedTotals.allCalculated && <span title="Not all wallets calculated yet"> *</span>}
                   </>
                 ) : (
@@ -510,8 +558,8 @@ function App() {
               <td className="num">
                 {formatUsd(
                   priceToMarketCap(
-                    investedTotals.hasAny && investedTotals.tokensAcquiredViaSwap > 0 && solStats?.priceUsd != null
-                      ? (investedTotals.investedSol / investedTotals.tokensAcquiredViaSwap) * solStats.priceUsd
+                    investedTotals.hasAny && investedTotals.tokensAcquired > 0
+                      ? investedTotals.investedUsd / investedTotals.tokensAcquired
                       : null
                   )
                 )}

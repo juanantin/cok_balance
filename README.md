@@ -80,6 +80,16 @@ cached (in the same Upstash store as the wallet list) so they persist and
 don't recompute on every page load; use the ↻ next to a computed value, or
 **Calculate invested** again, to refresh it.
 
+Some platforms genuinely can't be detected this way at all - e.g.
+fomo.family lets you buy with an off-chain cash balance that it converts to
+SOL internally, so there's no on-chain SOL/WSOL debit to find, even though
+a real purchase happened. For wallets like that, `MANUAL_INVESTED_OVERRIDES`
+at the top of `src/App.tsx` lets you hardcode a fixed `{ investedUsd,
+avgEntryMcUsd }` per address; it skips the on-chain scan for that wallet
+entirely and blends the fixed figures into the totals (as a proper
+token-weighted average, not a naive average) alongside every
+on-chain-computed wallet.
+
 This is also the slowest and most rate-limit-sensitive thing the app does -
 each signature needs its own `getTransaction` call, a method public RPCs
 throttle harder than balance checks. A dedicated `SOLANA_RPC_URL` (see below)
